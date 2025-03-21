@@ -2,12 +2,25 @@
 <html lang="uz">
 <head>
     <meta charset="utf-8">
-    <title>Global Map Creator</title>
+    <title>Global Map Data Chiqishi</title>
+    <style>
+        table {
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #333;
+            padding: 8px 12px;
+        }
+        th {
+            background-color: #eee;
+        }
+    </style>
 </head>
 <body>
-    <h1>Global xarita yaratish</h1>
+    <h1>Global xarita ma'lumotlari</h1>
     
-    <!-- Screenshot yuklash formasi -->
+    <!-- Yuklash formasi va canvas avvalgi misoldan qolgan bo'lsa -->
     <form id="uploadForm" enctype="multipart/form-data">
         <label for="screenshot">Screenshotni yuklang:</label>
         <input type="file" id="screenshot" name="screenshot" accept="image/*" required />
@@ -24,6 +37,9 @@
         <button type="button" onclick="processImage()">Process</button>
     </form>
     
+    <!-- Ma'lumotlarni chiqarish uchun container -->
+    <div id="mapDataContainer"></div>
+    
     <!-- Rasmni canvasga yuklab olish uchun yashirin canvas -->
     <canvas id="canvas" style="display:none;"></canvas>
 
@@ -35,7 +51,6 @@
             return;
         }
 
-        // Formadan offset qiymatlarini olish
         const offsetX = parseInt(document.getElementById('offsetX').value);
         const offsetY = parseInt(document.getElementById('offsetY').value);
 
@@ -43,43 +58,33 @@
         const img = new Image();
         const reader = new FileReader();
 
-        // Faylni o‘qish
         reader.onload = function(e) {
             img.src = e.target.result;
         };
 
-        // Rasm yuklangach, canvasga chizamiz va piksel ma'lumotlarini o‘qiymiz
         img.onload = async function() {
             const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
+            // willReadFrequently attributi performance uchun qo'shilishi mumkin
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
             
             canvas.width = img.width;
             canvas.height = img.height;
             ctx.drawImage(img, 0, 0);
 
-            // 1) Avtomatik masshtabni (scale) aniqlash
-            // Naiv (soddalashtirilgan) usul: 10 dan 1 gacha bo‘lgan diapazonda tekshiramiz.
+            // Masshtabni aniqlash (soddalashtirilgan usul)
             let detectedScale = 1;
             let foundScale = false;
-
-            // Yaxshiroq usulda: kichik bo‘laklarni tekshirib, bir xil rang bloklari bor-yo‘qligini
-            // analiz qilish mumkin. Bu misolda soddalashtirilgan tekshiruv.
             for (let s = 10; s >= 1; s--) {
-                // Agar rasm o‘lchami s ga bo‘linmas ekan, ehtimol s mos kelmasligi mumkin
                 if ((img.width % s === 0) && (img.height % s === 0)) {
                     let consistent = true;
-                    // Har s x s blok ichidagi ranglarni tezkor solishtiramiz
                     for (let y = 0; y < img.height; y += s) {
                         for (let x = 0; x < img.width; x += s) {
-                            // Blokning chap-ustki pikselini olamiz
                             const p = ctx.getImageData(x, y, 1, 1).data;
                             let blockColor = [p[0], p[1], p[2]];
-                            // Blokning markaziga yaqin pikselni olamiz va farqini ko‘ramiz
                             const xp = x + Math.floor(s/2);
                             const yp = y + Math.floor(s/2);
                             const p2 = ctx.getImageData(xp, yp, 1, 1).data;
                             
-                            // Agar farq katta bo‘lsa, demak bu s masshtabga to‘g‘ri kelmaydi
                             if (Math.abs(blockColor[0] - p2[0]) > 5 ||
                                 Math.abs(blockColor[1] - p2[1]) > 5 ||
                                 Math.abs(blockColor[2] - p2[2]) > 5) {
@@ -97,12 +102,10 @@
                     }
                 }
             }
-
             if (!foundScale) {
                 alert("Masshtab avtomatik aniqlanmadi, default = 1 bo‘ldi.");
             }
 
-            // 2) Endi detectedScale bo‘yicha har bir blokning o‘rtacha yoki markaz rangini olamiz
             let mapData = [];
             const scaledWidth = img.width / detectedScale;
             const scaledHeight = img.height / detectedScale;
@@ -111,19 +114,16 @@
                 for (let bx = 0; bx < scaledWidth; bx++) {
                     const x = bx * detectedScale;
                     const y = by * detectedScale;
-                    // Blokning markaziy pikselini olamiz
                     const xp = x + Math.floor(detectedScale / 2);
                     const yp = y + Math.floor(detectedScale / 2);
                     const d = ctx.getImageData(xp, yp, 1, 1).data;
                     
-                    // R, G, B qiymatlari
                     const color = {
                         r: d[0],
                         g: d[1],
                         b: d[2]
                     };
                     
-                    // Global koordinatalar (offsetni hisobga olgan holda)
                     const globalX = offsetX + bx;
                     const globalY = offsetY + by;
 
@@ -135,7 +135,10 @@
                 }
             }
 
-            // 3) Tayyor ma'lumotni (mapData) AJAX orqali PHP backend ga (save_map.php) yuboramiz
+            // Ma'lumotlarni HTML da chiqarish
+            displayMapData(mapData);
+
+            // Serverga ma'lumot yuborish (agar kerak bo'lsa)
             try {
                 const response = await fetch('save_map.php', {
                     method: 'POST',
@@ -152,8 +155,36 @@
             }
         };
 
-        // Faylni o‘qishni boshlaymiz
         reader.readAsDataURL(file);
+    }
+
+    // mapData massivini HTML jadval ko'rinishida chiqaruvchi funksiya
+    function displayMapData(mapData) {
+        const container = document.getElementById('mapDataContainer');
+        // Jadval yaratish
+        let table = document.createElement('table');
+
+        // Jadval sarlavhalarini (header) yaratish
+        let header = document.createElement('tr');
+        header.innerHTML = '<th>X</th><th>Y</th><th>R</th><th>G</th><th>B</th>';
+        table.appendChild(header);
+
+        // Har bir mapData elementini jadval satri sifatida qo'shamiz
+        mapData.forEach(pixel => {
+            let row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${pixel.x}</td>
+                <td>${pixel.y}</td>
+                <td>${pixel.color.r}</td>
+                <td>${pixel.color.g}</td>
+                <td>${pixel.color.b}</td>
+            `;
+            table.appendChild(row);
+        });
+
+        // Containerni tozalab, jadvalni qo'shamiz
+        container.innerHTML = "";
+        container.appendChild(table);
     }
     </script>
 </body>
